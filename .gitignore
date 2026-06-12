@@ -1,0 +1,22 @@
+# Virtual Environments
+myvenv/
+venv/
+venv1/
+backend/myvenv/
+frontend/myvenv/
+frontend/venv1/
+
+# Databases
+backend/data/
+vectorstore/
+uploads/
+
+# Environment Variables
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
