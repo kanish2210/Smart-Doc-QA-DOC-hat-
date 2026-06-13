@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gemini-2.5-flash"
 
     # Embeddings (runs locally, no API needed)
-    EMBEDDING_MODEL: str = "models/embedding-001"
+    EMBEDDING_MODEL: "all-MiniLM-L6-v2"
 
     # ChromaDB
     VECTORSTORE_DIR: str = "vectorstore"
