@@ -41,6 +41,24 @@ st.markdown("""
     color: #333333;
 }
 .timestamp { font-size: 11px; color: #888888; margin-top: 4px; }
+.history-message-user {
+    background-color: #DCF8C6;
+    padding: 10px 14px;
+    border-radius: 12px 12px 2px 12px;
+    margin: 6px 0;
+    margin-left: 20%;
+    color: #000000;
+    font-size: 14px;
+}
+.history-message-assistant {
+    background-color: #F0F0F0;
+    padding: 10px 14px;
+    border-radius: 12px 12px 12px 2px;
+    margin: 6px 0;
+    margin-right: 20%;
+    color: #000000;
+    font-size: 14px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,7 +78,7 @@ def check_backend() -> bool:
 def check_file_exists(filename: str) -> bool:
     try:
         r = requests.get(
-            f"{BACKEND_URL}/api/documents/check/{filename}",
+            f"{BACKEND_URL}/api/documents/check/{requests.utils.quote(filename)}",
             timeout=5
         )
         if r.status_code == 200:
@@ -126,14 +144,26 @@ def clear_history(filename: str) -> bool:
         return False
 
 
-def get_documents() -> list:
+def get_closed_documents() -> list:
     try:
-        r = requests.get(f"{BACKEND_URL}/api/documents", timeout=10)
+        r = requests.get(f"{BACKEND_URL}/api/closed-documents", timeout=10)
         if r.status_code == 200:
             return r.json().get("documents", [])
         return []
     except Exception:
         return []
+
+
+def close_document(filename: str) -> bool:
+    try:
+        r = requests.post(
+            f"{BACKEND_URL}/api/close-document",
+            json={"filename": filename},
+            timeout=10
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 def delete_document(filename: str) -> bool:
@@ -205,8 +235,8 @@ if "active_file" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "documents" not in st.session_state:
-    st.session_state.documents = []
+if "closed_documents" not in st.session_state:
+    st.session_state.closed_documents = []
 
 if "input_key" not in st.session_state:
     st.session_state.input_key = 0
@@ -216,6 +246,15 @@ if "pending_upload" not in st.session_state:
 
 if "confirm_reupload" not in st.session_state:
     st.session_state.confirm_reupload = False
+
+if "viewing_history" not in st.session_state:
+    st.session_state.viewing_history = None
+
+if "last_error" not in st.session_state:
+    st.session_state.last_error = None
+
+if "uploaded_file_data" not in st.session_state:
+    st.session_state.uploaded_file_data = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,113 +274,122 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("📁 Upload Document")
-    st.info("📌 PDF and DOCX format only.")
+    # Upload section — only show when no active chat
+    if not st.session_state.active_file:
+        st.subheader("📁 Upload Document")
+        st.info("📌 PDF format only.")
 
-    uploaded_file = st.file_uploader(
-    "Choose a file",
-    type=["pdf", "docx"],
-    help="PDF and DOCX files are supported.",
-    key="file_uploader"
-)
+        uploaded_file = st.file_uploader(
+            "Choose a PDF file",
+            type=["pdf"],
+            help="Only PDF files are supported.",
+            key="file_uploader"
+        )
 
-    if uploaded_file:
-        size_kb = len(uploaded_file.getvalue()) / 1024
-        st.caption(f"📄 {uploaded_file.name} ({size_kb:.1f} KB)")
+        if uploaded_file:
+            size_kb = len(uploaded_file.getvalue()) / 1024
+            st.caption(f"📄 {uploaded_file.name} ({size_kb:.1f} KB)")
 
-        if st.button(
-            "🚀 Upload & Start Chat",
-            type="primary",
-            use_container_width=True,
-            disabled=not backend_ok
-        ):
-            already_exists = check_file_exists(uploaded_file.name)
+            if st.button(
+                "🚀 Upload & Start Chat",
+                type="primary",
+                use_container_width=True,
+                disabled=not backend_ok
+            ):
+                already_exists = check_file_exists(uploaded_file.name)
 
-            if already_exists and not st.session_state.confirm_reupload:
-                st.session_state.pending_upload = uploaded_file
-                st.session_state.confirm_reupload = True
-                st.rerun()
-            else:
-                with st.spinner("Processing PDF..."):
-                    result = upload_pdf(uploaded_file)
-
-                if "error" in result:
-                    st.error(f"❌ {result['error']}")
+                if already_exists and not st.session_state.confirm_reupload:
+                    st.session_state.pending_upload = uploaded_file
+                    st.session_state.confirm_reupload = True
+                    st.rerun()
                 else:
-                    st.session_state.active_file = uploaded_file.name
-                    st.session_state.messages = []
+                    with st.spinner("Processing PDF..."):
+                        result = upload_pdf(uploaded_file)
+
+                    if "error" in result:
+                        st.error(f"❌ {result['error']}")
+                    else:
+                        st.session_state.active_file = uploaded_file.name
+                        st.session_state.messages = []
+                        st.session_state.viewing_history = None
+                        st.session_state.confirm_reupload = False
+                        st.session_state.pending_upload = None
+                        st.session_state.last_error = None
+                        st.rerun()
+
+        if st.session_state.confirm_reupload and st.session_state.pending_upload:
+            fname = st.session_state.pending_upload.name
+            st.warning(f"⚠️ **'{fname}'** is already uploaded.")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 Re-upload", use_container_width=True):
+                    with st.spinner("Re-uploading..."):
+                        result = upload_pdf(st.session_state.pending_upload)
+                    if "error" in result:
+                        st.error(f"❌ {result['error']}")
+                    else:
+                        st.session_state.active_file = fname
+                        st.session_state.messages = []
+                        st.session_state.viewing_history = None
+                        st.session_state.confirm_reupload = False
+                        st.session_state.pending_upload = None
+                        st.rerun()
+            with col2:
+                if st.button("❌ Cancel", use_container_width=True):
                     st.session_state.confirm_reupload = False
                     st.session_state.pending_upload = None
-                    st.session_state.documents = get_documents()
                     st.rerun()
 
-    if st.session_state.confirm_reupload and st.session_state.pending_upload:
-        fname = st.session_state.pending_upload.name
-        st.warning(f"⚠️ **'{fname}'** is already uploaded.")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📂 Open existing", use_container_width=True):
-                st.session_state.active_file = fname
-                st.session_state.messages = get_chat_history(fname)
-                st.session_state.confirm_reupload = False
-                st.session_state.pending_upload = None
-                st.rerun()
-        with col2:
-            if st.button("🔄 Re-upload", use_container_width=True):
-                with st.spinner("Re-uploading..."):
-                    result = upload_pdf(st.session_state.pending_upload)
-                if "error" in result:
-                    st.error(f"❌ {result['error']}")
-                else:
-                    st.session_state.active_file = fname
-                    st.session_state.messages = []
-                    st.session_state.confirm_reupload = False
-                    st.session_state.pending_upload = None
-                    st.session_state.documents = get_documents()
-                    st.rerun()
+    else:
+        # Active chat controls
+        st.subheader(f"💬 Active Chat")
+        st.info(f"📄 {st.session_state.active_file}")
+
+        if st.button("❌ Close Chat", use_container_width=True, type="primary"):
+            # Save to closed documents
+            close_document(st.session_state.active_file)
+            st.session_state.closed_documents = get_closed_documents()
+            st.session_state.active_file = None
+            st.session_state.messages = []
+            st.session_state.viewing_history = None
+            st.session_state.last_error = None
+            st.rerun()
+
+        if st.button("🗑️ Clear Chat History", use_container_width=True):
+            clear_history(st.session_state.active_file)
+            st.session_state.messages = []
+            st.rerun()
 
     st.divider()
 
+    # Stored Documents — only closed chats
     st.subheader("📚 Stored Documents")
-    st.session_state.documents = get_documents()
+    st.session_state.closed_documents = get_closed_documents()
 
-    if not st.session_state.documents:
-        st.caption("No documents uploaded yet.")
+    if not st.session_state.closed_documents:
+        st.caption("No closed chats yet.")
     else:
-        for doc in st.session_state.documents:
+        for doc in st.session_state.closed_documents:
             col1, col2 = st.columns([4, 1])
             with col1:
-                is_active = doc == st.session_state.active_file
-                label = f"{'▶ ' if is_active else '📄 '}{doc}"
-                if st.button(label, key=f"open_{doc}",
+                is_viewing = doc == st.session_state.viewing_history
+                label = f"{'👁️ ' if is_viewing else '📄 '}{doc}"
+                if st.button(label, key=f"view_{doc}",
                              use_container_width=True):
-                    st.session_state.active_file = doc
-                    st.session_state.messages = get_chat_history(doc)
+                    st.session_state.viewing_history = doc
+                    st.session_state.active_file = None
                     st.rerun()
             with col2:
                 if st.button("🗑️", key=f"del_{doc}"):
                     delete_document(doc)
-                    if st.session_state.active_file == doc:
-                        st.session_state.active_file = None
-                        st.session_state.messages = []
-                    st.session_state.documents = get_documents()
+                    if st.session_state.viewing_history == doc:
+                        st.session_state.viewing_history = None
+                    st.session_state.closed_documents = get_closed_documents()
                     st.rerun()
 
     st.divider()
-
     st.subheader("⚙️ Settings")
     k_value = st.slider("Chunks to retrieve (K)", 1, 10, 4)
-
-    if st.session_state.active_file:
-        st.divider()
-        if st.button("🗑️ Clear chat history", use_container_width=True):
-            clear_history(st.session_state.active_file)
-            st.session_state.messages = []
-            st.rerun()
-        if st.button("❌ Close chat", use_container_width=True):
-            st.session_state.active_file = None
-            st.session_state.messages = []
-            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -354,9 +402,38 @@ if not backend_ok:
     st.warning("⚠️ Backend is offline. Please try again in a moment.")
     st.stop()
 
+# ---------------------------------------------------------------------------
+# VIEWING HISTORY MODE
+# ---------------------------------------------------------------------------
+
+if st.session_state.viewing_history and not st.session_state.active_file:
+    fname = st.session_state.viewing_history
+    st.subheader(f"📄 Chat History — {fname}")
+    st.caption("This is a read-only view of past conversations.")
+
+    if st.button("← Back"):
+        st.session_state.viewing_history = None
+        st.rerun()
+
+    st.divider()
+    history = get_chat_history(fname)
+
+    if not history:
+        st.info("No chat history found for this document.")
+    else:
+        for msg in history:
+            render_message(msg)
+
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# ACTIVE CHAT MODE
+# ---------------------------------------------------------------------------
+
 if not st.session_state.active_file:
     st.info(
-        "👈 Upload a PDF or click a document from the sidebar to start chatting."
+        "👈 Upload a PDF from the sidebar to start a new chat, "
+        "or click a document in Stored Documents to view its history."
     )
     st.stop()
 
@@ -375,30 +452,25 @@ else:
     st.markdown(
         "<div style='text-align:center;color:#888;padding:40px 0'>"
         "<h3>💡 No questions yet</h3>"
-        "<p>Type your first question below!</p></div>",
+        "<p>Type your question below and press Enter!</p></div>",
         unsafe_allow_html=True
     )
 
+# Show last error if any
+if st.session_state.last_error:
+    st.error(f"❌ {st.session_state.last_error}")
+
+# Question input with Enter to submit
 st.subheader("❓ Ask a Question")
 
-question = st.text_area(
+question = st.text_input(
     "Your question",
-    placeholder="e.g. What is this document about?",
-    height=100,
+    placeholder="Type your question and press Enter...",
     label_visibility="collapsed",
     key=f"question_input_{st.session_state.input_key}"
 )
 
-col1, col2, col3 = st.columns([2, 1, 2])
-with col2:
-    ask_btn = st.button(
-        "🔍 Ask",
-        type="primary",
-        use_container_width=True,
-        disabled=not question.strip()
-    )
-
-if ask_btn and question.strip():
+if question.strip():
     render_message({
         "role": "user",
         "content": question.strip(),
@@ -414,7 +486,9 @@ if ask_btn and question.strip():
         )
 
     if "error" in result:
-        st.error(f"❌ Error: {result['error']}")
+        st.session_state.last_error = result["error"]
+        st.session_state.input_key += 1
+        st.rerun()
     else:
         answer = result.get("answer", "")
         sources = result.get("sources", [])
@@ -433,7 +507,7 @@ if ask_btn and question.strip():
         })
 
         st.caption(f"Model: {model} · Chunks: {chunks} · K: {k_value}")
-
+        st.session_state.last_error = None
         st.session_state.input_key += 1
         st.session_state.messages = get_chat_history(
             st.session_state.active_file
