@@ -1,88 +1,62 @@
-# embedding_service.py
-# Generates embeddings using all-MiniLM-L6-v2 (runs locally, free).
-# Stores embeddings in ChromaDB via chromadb_service.
-
 import logging
 import time
-from langchain_community.embeddings import SentenceTransformerEmbeddings
-# SentenceTransformerEmbeddings : LangChain wrapper for local models
-# Downloads and runs all-MiniLM-L6-v2 on your machine
-# No API key needed — completely free and private
-
+import google.generativeai as genai
+from langchain.embeddings.base import Embeddings
 from app.core.config import settings
 from app.services import chromadb_service
 
 logger = logging.getLogger(__name__)
 
 
-def get_embeddings_model() -> SentenceTransformerEmbeddings:
-    """
-    Creates the all-MiniLM-L6-v2 embedding model.
+class GeminiEmbeddings(Embeddings):
+    def __init__(self):
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        self.model = "models/embedding-001"
 
-    This model:
-    - Runs completely locally on your machine
-    - Requires no API key
-    - Produces 384-dimensional vectors
-    - Is fast and accurate for semantic search
-    - Downloads automatically on first use (~90MB)
-    """
-    logger.debug(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        embeddings = []
+        for text in texts:
+            result = genai.embed_content(
+                model=self.model,
+                content=text,
+                task_type="retrieval_document"
+            )
+            embeddings.append(result["embedding"])
+        return embeddings
 
-    return SentenceTransformerEmbeddings(
-        model_name=settings.EMBEDDING_MODEL
-        # all-MiniLM-L6-v2 : Small, fast, high quality
-        # Downloaded from HuggingFace on first run
-        # Cached locally after first download
-    )
+    def embed_query(self, text: str) -> list[float]:
+        result = genai.embed_content(
+            model=self.model,
+            content=text,
+            task_type="retrieval_query"
+        )
+        return result["embedding"]
+
+
+def get_embeddings_model() -> GeminiEmbeddings:
+    return GeminiEmbeddings()
 
 
 def verify_embedding_model() -> bool:
-    """
-    Tests the embedding model by encoding a short string.
-    Returns True if working correctly.
-    """
-    logger.info("Verifying embedding model...")
-
     try:
         model = get_embeddings_model()
-        result = model.embed_query("test connection")
-
+        result = model.embed_query("test")
         if result and len(result) > 0:
-            logger.info(
-                f"Embedding model verified. "
-                f"Dimensions: {len(result)}"
-            )
+            logger.info(f"Gemini embeddings OK. Dimensions: {len(result)}")
             return True
-
-        logger.error("Embedding model returned empty vector.")
         return False
-
     except Exception as e:
-        logger.error(f"Embedding model error: {e}")
+        logger.error(f"Gemini embedding error: {e}")
         return False
 
 
 def store_chunks_in_chromadb(chunks: list[dict]) -> int:
-    """
-    Converts chunks to embeddings and stores in ChromaDB.
-    Uses all-MiniLM-L6-v2 for local embedding generation.
-
-    Processes in batches of 50 to manage memory efficiently.
-    Returns total number of chunks stored.
-    """
     if not chunks:
         raise ValueError("No chunks provided.")
 
-    logger.info(f"Starting embedding for {len(chunks)} chunks...")
-
-    # Verify model loads correctly before processing
     if not verify_embedding_model():
-        raise ValueError(
-            "Embedding model failed to load. "
-            "Run: pip install sentence-transformers"
-        )
+        raise ValueError("Gemini embedding failed. Check GEMINI_API_KEY.")
 
-    # Prepare data lists
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
     ids = [
@@ -90,21 +64,15 @@ def store_chunks_in_chromadb(chunks: list[dict]) -> int:
         for c in chunks
     ]
 
-    # Process in batches
     batch_size = 50
     total_batches = (len(chunks) + batch_size - 1) // batch_size
     model = get_embeddings_model()
     total_stored = 0
     start_time = time.time()
 
-    logger.info(f"Processing {total_batches} batch(es)...")
-
     for i in range(total_batches):
         s = i * batch_size
         e = min(s + batch_size, len(chunks))
-
-        logger.info(f"Batch {i+1}/{total_batches} (chunks {s+1}-{e})...")
-
         try:
             stored = chromadb_service.store_chunks(
                 texts=texts[s:e],
@@ -113,16 +81,10 @@ def store_chunks_in_chromadb(chunks: list[dict]) -> int:
                 embeddings=model
             )
             total_stored += stored
-            logger.info(f"Batch {i+1} done — {stored} chunks stored.")
-
         except Exception as err:
             logger.error(f"Batch {i+1} failed: {err}")
             raise
 
     elapsed = time.time() - start_time
-    logger.info(
-        f"Embedding complete. "
-        f"{total_stored}/{len(chunks)} chunks stored "
-        f"in {elapsed:.2f}s."
-    )
+    logger.info(f"Done. {total_stored}/{len(chunks)} chunks in {elapsed:.2f}s.")
     return total_stored
