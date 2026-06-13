@@ -5,7 +5,7 @@ import streamlit as st
 import requests
 import time
 
-BACKEND_URL = "https://smart-doc-qa-backend.onrender.com"
+BACKEND_URL = "https://kanish22-smart-doc-qa-backend.hf.space"
 
 # Page config — must be first Streamlit command
 st.set_page_config(
