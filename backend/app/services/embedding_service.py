@@ -39,14 +39,16 @@ def get_embeddings_model() -> GeminiEmbeddings:
 
 def verify_embedding_model() -> bool:
     try:
+        logger.info(f"Testing Gemini embedding... Key starts with: {settings.GEMINI_API_KEY[:8] if settings.GEMINI_API_KEY else 'MISSING'}")
         model = get_embeddings_model()
         result = model.embed_query("test")
         if result and len(result) > 0:
             logger.info(f"Gemini embeddings OK. Dimensions: {len(result)}")
             return True
+        logger.error("Gemini returned empty embedding.")
         return False
     except Exception as e:
-        logger.error(f"Gemini embedding error: {e}")
+        logger.error(f"Gemini embedding error: {type(e).__name__}: {e}")
         return False
 
 
@@ -82,7 +84,7 @@ def store_chunks_in_chromadb(chunks: list[dict]) -> int:
             )
             total_stored += stored
         except Exception as err:
-            logger.error(f"Batch {i+1} failed: {err}")
+            logger.error(f"Batch {i+1} failed: {type(err).__name__}: {err}")
             raise
 
     elapsed = time.time() - start_time
