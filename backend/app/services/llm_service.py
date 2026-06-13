@@ -1,6 +1,3 @@
-# llm_service.py
-# Answer generation using Gemini 2.5 Flash.
-
 import logging
 import time
 import google.generativeai as genai
@@ -10,20 +7,19 @@ from app.services.retrieval_service import retrieve
 
 logger = logging.getLogger(__name__)
 
-PROMPT_TEMPLATE = """You are a precise and helpful document assistant.
+PROMPT_TEMPLATE = """You are a precise document assistant.
 
-Answer the user's question using ONLY the context provided below.
+Answer ONLY using the context below from the document '{filename}'.
 
 STRICT RULES:
-1. Answer ONLY using information present in the context.
-2. If the answer cannot be found, respond with exactly:
-   "I could not find relevant information in the provided documents to answer this question."
-3. NEVER make up facts not in the context.
-4. Be clear and well-structured.
-5. Reference the source page when helpful (e.g. "According to page 3...").
-6. Do not repeat the question in your answer.
+1. Answer ONLY using information from the context.
+2. If the answer is not in the context, respond with exactly:
+   "I could not find relevant information in the provided document to answer this question."
+3. NEVER make up facts.
+4. Reference page numbers when helpful.
+5. Do not repeat the question.
 
-Context from uploaded documents:
+Context from '{filename}':
 ═══════════════════════════════════════════════════════
 {context}
 ═══════════════════════════════════════════════════════
@@ -43,51 +39,34 @@ NO_ANSWER_PHRASES = [
 
 
 def call_gemini_with_retry(prompt: str, max_retries: int = 3) -> str:
-    """Calls Gemini 2.5 Flash with automatic retry on rate limits."""
     api_key = settings.GEMINI_API_KEY.strip()
     if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY is empty. "
-            "Open backend/.env and add: GEMINI_API_KEY=your_key_here"
-        )
+        raise ValueError("GEMINI_API_KEY is empty.")
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
         model_name=settings.LLM_MODEL,
-        generation_config={
-            "temperature": 0.1,
-            "max_output_tokens": 1024,
-        }
+        generation_config={"temperature": 0.1, "max_output_tokens": 1024}
     )
 
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"Gemini call attempt {attempt}/{max_retries}...")
             response = model.generate_content(prompt)
             if response.text:
-                logger.info("Gemini responded successfully.")
                 return response.text.strip()
-            else:
-                raise ValueError("Gemini returned empty response.")
-
+            raise ValueError("Gemini returned empty response.")
         except Exception as e:
             error_str = str(e).lower()
-
-            if any(t in error_str for t in ["429", "quota", "rate", "resource_exhausted", "too many requests"]):
+            if any(t in error_str for t in ["429", "quota", "rate", "resource_exhausted"]):
                 if attempt < max_retries:
                     wait = 20 * attempt
-                    logger.warning(f"Rate limit hit. Waiting {wait}s before retry {attempt+1}...")
+                    logger.warning(f"Rate limit. Waiting {wait}s...")
                     time.sleep(wait)
                     continue
-                else:
-                    raise ValueError("Rate limit reached. Wait 1 minute and try again.")
-
-            elif any(t in error_str for t in ["api key not valid", "invalid api key", "permission_denied", "unauthenticated"]):
-                raise ValueError(
-                    "API key not valid. Check GEMINI_API_KEY in backend/.env"
-                )
+                raise ValueError("Rate limit reached. Wait 1 minute.")
+            elif any(t in error_str for t in ["api key not valid", "invalid api key", "permission_denied"]):
+                raise ValueError("API key not valid. Check GEMINI_API_KEY.")
             else:
-                logger.error(f"Gemini error: {e}")
                 raise
 
     raise ValueError("Gemini failed after all retries.")
@@ -113,16 +92,12 @@ def build_citations(chunks: list[RetrievedChunk]) -> list[SourceCitation]:
     return sorted(seen.values(), key=lambda x: x.score)
 
 
-def generate_answer(question: str, k: int = None) -> AnswerResponse:
-    """Full RAG pipeline: retrieve → prompt → Gemini → answer."""
+def generate_answer(question: str, filename: str, k: int = None) -> AnswerResponse:
     if not question or not question.strip():
         raise ValueError("Question cannot be empty.")
 
     question = question.strip()
-    logger.info(f"Question: '{question[:80]}'")
-
-    # Step 1 — Retrieve chunks from ChromaDB
-    result = retrieve(question=question, k=k)
+    result = retrieve(question=question, filename=filename, k=k)
 
     if not result.chunks:
         return AnswerResponse(
@@ -134,17 +109,14 @@ def generate_answer(question: str, k: int = None) -> AnswerResponse:
             answer_found=False
         )
 
-    # Step 2 — Build prompt with retrieved context
     prompt = PROMPT_TEMPLATE.format(
+        filename=filename,
         context=result.context,
         question=question
     )
-    logger.info(f"Prompt built. Context: {len(result.context)} chars from {result.sources}")
 
-    # Step 3 — Call Gemini
     raw_answer = call_gemini_with_retry(prompt)
 
-    # Step 4 — Return answer with citations
     return AnswerResponse(
         answer=raw_answer,
         sources=build_citations(result.chunks),

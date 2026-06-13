@@ -8,30 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_embeddings_model() -> SentenceTransformerEmbeddings:
-    return SentenceTransformerEmbeddings(
-        model_name=settings.EMBEDDING_MODEL
-    )
+    return SentenceTransformerEmbeddings(model_name=settings.EMBEDDING_MODEL)
 
 
-def verify_embedding_model() -> bool:
-    try:
-        model = get_embeddings_model()
-        result = model.embed_query("test connection")
-        if result and len(result) > 0:
-            logger.info(f"Embedding model verified. Dimensions: {len(result)}")
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Embedding model error: {e}")
-        return False
-
-
-def store_chunks_in_chromadb(chunks: list[dict]) -> int:
+def store_chunks_in_chromadb(chunks: list[dict], filename: str) -> int:
     if not chunks:
         raise ValueError("No chunks provided.")
-
-    if not verify_embedding_model():
-        raise ValueError("Embedding model failed to load.")
 
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
@@ -54,7 +36,8 @@ def store_chunks_in_chromadb(chunks: list[dict]) -> int:
                 texts=texts[s:e],
                 metadatas=metadatas[s:e],
                 ids=ids[s:e],
-                embeddings=model
+                embeddings=model,
+                filename=filename
             )
             total_stored += stored
         except Exception as err:
