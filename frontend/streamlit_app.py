@@ -236,13 +236,14 @@ with st.sidebar:
     st.divider()
 
     st.subheader("📁 Upload Document")
-    st.info("📌 PDF format only.")
+    st.info("📌 PDF and DOCX format only.")
 
     uploaded_file = st.file_uploader(
-        "Choose a PDF file",
-        type=["pdf"],
-        help="Only PDF files are supported."
-    )
+    "Choose a file",
+    type=["pdf", "docx"],
+    help="PDF and DOCX files are supported.",
+    key="file_uploader"
+)
 
     if uploaded_file:
         size_kb = len(uploaded_file.getvalue()) / 1024

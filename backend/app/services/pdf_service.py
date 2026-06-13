@@ -1,8 +1,4 @@
-# pdf_service.py
-# Handles PDF validation, saving to disk, and text extraction.
-# Uses PyMuPDF (fitz) to read PDF pages.
-
-import fitz  # PyMuPDF
+import fitz
 import os
 import shutil
 import logging
@@ -12,63 +8,39 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_EXTENSIONS = [".pdf", ".docx", ".doc"]
 
-def validate_pdf_file(file: UploadFile) -> None:
-    """
-    Checks the uploaded file is actually a PDF.
-    Raises ValueError if not.
-    """
-    if not file.filename.lower().endswith(".pdf"):
+
+def validate_file(file: UploadFile) -> str:
+    ext = os.path.splitext(file.filename.lower())[1]
+    if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(
-            f"Only PDF files are accepted. Got: {file.filename}"
+            f"Only PDF and DOCX files are accepted. Got: {file.filename}"
         )
-    if file.content_type not in [
-        "application/pdf",
-        "application/octet-stream"
-    ]:
-        raise ValueError(
-            f"Invalid content type: {file.content_type}"
-        )
+    return ext
 
 
 def save_uploaded_file(file: UploadFile) -> str:
-    """
-    Saves the uploaded PDF to the uploads folder.
-    Returns the full file path.
-    """
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(settings.UPLOAD_DIR, file.filename)
-
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
-    logger.info(f"Saved PDF: {file_path}")
+    logger.info(f"Saved file: {file_path}")
     return file_path
 
 
 def extract_text_from_pdf(file_path: str) -> list[PageContent]:
-    """
-    Extracts text from every page of a PDF.
-    Skips blank pages automatically.
-    Returns list of PageContent objects.
-    """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"PDF not found: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     pages = []
-
     with fitz.open(file_path) as pdf:
         if pdf.page_count == 0:
             raise ValueError("PDF has no pages.")
-
         for i in range(pdf.page_count):
-            # Extract plain text from this page
             text = pdf[i].get_text("text").strip()
-
-            # Skip pages with no text (blank or image-only pages)
             if not text:
                 continue
-
             pages.append(PageContent(
                 page_number=i + 1,
                 text=text
@@ -77,22 +49,96 @@ def extract_text_from_pdf(file_path: str) -> list[PageContent]:
     if not pages:
         raise ValueError(
             "No text could be extracted. "
-            "This PDF may be a scanned image. "
-            "Please use a PDF with selectable text."
+            "This PDF may be scanned. Use a PDF with selectable text."
         )
 
-    logger.info(f"Extracted text from {len(pages)} pages.")
+    logger.info(f"Extracted {len(pages)} pages from PDF.")
     return pages
 
 
+def extract_text_from_docx(file_path: str) -> list[PageContent]:
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    try:
+        from docx import Document
+        doc = Document(file_path)
+
+        pages = []
+        current_page_text = []
+        page_number = 1
+        para_count = 0
+        paras_per_page = 20
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+
+            current_page_text.append(text)
+            para_count += 1
+
+            if para_count >= paras_per_page:
+                combined = "\n".join(current_page_text)
+                if combined.strip():
+                    pages.append(PageContent(
+                        page_number=page_number,
+                        text=combined
+                    ))
+                page_number += 1
+                current_page_text = []
+                para_count = 0
+
+        # Add remaining text
+        if current_page_text:
+            combined = "\n".join(current_page_text)
+            if combined.strip():
+                pages.append(PageContent(
+                    page_number=page_number,
+                    text=combined
+                ))
+
+        # Also extract tables
+        for table in doc.tables:
+            table_text = []
+            for row in table.rows:
+                row_text = " | ".join(
+                    cell.text.strip() for cell in row.cells
+                    if cell.text.strip()
+                )
+                if row_text:
+                    table_text.append(row_text)
+
+            if table_text:
+                pages.append(PageContent(
+                    page_number=page_number,
+                    text="\n".join(table_text)
+                ))
+                page_number += 1
+
+        if not pages:
+            raise ValueError(
+                "No text could be extracted from this DOCX file."
+            )
+
+        logger.info(f"Extracted {len(pages)} sections from DOCX.")
+        return pages
+
+    except ImportError:
+        raise ValueError(
+            "python-docx not installed. "
+            "Run: pip install python-docx"
+        )
+
+
 def process_pdf(file: UploadFile) -> dict:
-    """
-    Master function — validates, saves, and extracts text.
-    Called by the upload endpoint.
-    """
-    validate_pdf_file(file)
+    ext = validate_file(file)
     file_path = save_uploaded_file(file)
-    pages = extract_text_from_pdf(file_path)
+
+    if ext == ".pdf":
+        pages = extract_text_from_pdf(file_path)
+    else:
+        pages = extract_text_from_docx(file_path)
 
     return {
         "file_path": file_path,
