@@ -9,8 +9,26 @@ logger = logging.getLogger(__name__)
 
 
 def _collection_name(filename: str) -> str:
-    safe = filename.replace(" ", "_").replace(".", "_").replace("-", "_")
-    return f"doc_{safe}"[:63]
+    import re
+    # Remove file extension
+    name = filename.rsplit(".", 1)[0]
+    # Replace any invalid character with underscore
+    name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+    # Remove consecutive underscores
+    name = re.sub(r'_+', '_', name)
+    # Strip leading/trailing underscores
+    name = name.strip('_')
+    # Ensure starts and ends with alphanumeric
+    if not name[0].isalnum():
+        name = 'doc' + name
+    if not name[-1].isalnum():
+        name = name + '0'
+    # Prefix and trim to 63 chars
+    name = f"doc_{name}"[:63]
+    # Ensure ends with alphanumeric after trim
+    while name and not name[-1].isalnum():
+        name = name[:-1]
+    return name
 
 
 def _get_collection(filename: str, embeddings) -> Chroma:
