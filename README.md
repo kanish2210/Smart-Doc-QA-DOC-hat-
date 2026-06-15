@@ -28,7 +28,6 @@
 - 📚 Source citations with page numbers and relevance scores
 - 💬 Persistent chat history per session
 - 🗑️ Delete documents and clear chat history
-- ⚠️ Graceful "no relevant information" response for out-of-scope questions
 - ⚡ Fast and responsive UI built with Streamlit
 
 ---
@@ -218,50 +217,6 @@ Answer + citations
 
 displayed in chat UI
 
-### ☁️ Deployment Architecture
-┌──────────────────────────────────────────────┐
-
-│              CLOUD DEPLOYMENT                │
-
-│                                              │
-
-│  ┌─────────────────┐  ┌──────────────────┐  │
-
-│  │  Streamlit Cloud │  │ Hugging Face     │  │
-
-│  │                 │  │ Spaces           │  │
-
-│  │  • Frontend UI  │  │                  │  │
-
-│  │  • Auto-deploy  │─▶│  • FastAPI       │  │
-
-│  │    from GitHub  │  │  • ChromaDB      │  │
-
-│  │  • Free tier    │  │  • Embeddings    │  │
-
-│  │  • Always on    │  │  • 16GB RAM      │  │
-
-│  └─────────────────┘  │  • Free tier     │  │
-
-│                        │  • Always on    │  │
-
-│                        └──────────────────┘  │
-
-│                                              │
-
-│  ┌───────────────────────────────────────┐   │
-
-│  │         Google Gemini API             │   │
-
-│  │  • gemini-2.5-flash                  │   │
-
-│  │  • Free tier (1500 req/day)          │   │
-
-│  └───────────────────────────────────────┘   │
-
-└──────────────────────────────────────────────┘
-
----
 
 ## 🛠️ Tech Stack
 
